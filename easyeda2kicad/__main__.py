@@ -417,7 +417,7 @@ def valid_arguments(arguments: dict) -> bool:
                         """\
                     (kicad_symbol_lib
                       (version 20211014)
-                      (generator https://github.com/uPesy/easyeda2kicad.py)
+                      (generator https://github.com/georgesleen/easyeda2kicad.py)
                     )"""
                     )
                     if kicad_version == KicadVersion.v6

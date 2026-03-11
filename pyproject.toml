@@ -8,7 +8,7 @@ description = "A Python script that convert any electronic components from LCSC 
 readme = "README.md"
 dynamic = ["version"]
 authors = [
-    { name = "uPesy + George Sleen", email = "george@bluerobotics.com" },
+    { name = "George Sleen", email = "george@bluerobotics.com" },
 ]
 license = { text = "AGPL-3.0" }
 requires-python = ">=3.8"
@@ -31,7 +31,7 @@ dev = [
 ]
 
 [project.urls]
-Code = "https://github.com/GeorgeSleen-BR/easyeda2kicad.py"
+Code = "https://github.com/georgesleen/easyeda2kicad.py"
 
 [project.scripts]
 easyeda2kicad = "easyeda2kicad.__main__:main"
