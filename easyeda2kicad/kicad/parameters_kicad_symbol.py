@@ -515,4 +515,4 @@ class KiSymbol:
 
     def export(self, kicad_version: KicadVersion) -> str:
         component_data = getattr(self, f"export_{kicad_version.name}")()
-        return re.sub(r"\n\s*\n", "\n", component_data, re.MULTILINE)
+        return re.sub(r"\n\s*\n", "\n", component_data, flags=re.MULTILINE)

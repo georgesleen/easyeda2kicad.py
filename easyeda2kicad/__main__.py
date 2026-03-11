@@ -141,6 +141,10 @@ def get_parser() -> argparse.ArgumentParser:
 
 
 def valid_arguments(arguments: dict[str, Any]) -> bool:
+    arguments.setdefault("custom_field", [])
+    arguments.setdefault("footprint_link_mode", "generated")
+    arguments.setdefault("footprint_link", "")
+
     for lcsc_id in arguments["lcsc_id"]:
         if not lcsc_id.startswith("C"):
             logging.error(f"lcsc_id '{lcsc_id}' should start with C")

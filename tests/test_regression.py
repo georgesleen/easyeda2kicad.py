@@ -7,6 +7,7 @@ from a known-good version to detect any unintended changes in output.
 
 import re
 import shutil
+import socket
 from pathlib import Path
 from typing import List, Tuple
 
@@ -31,6 +32,30 @@ TEST_COMPONENTS = [
     "C2685",
     "C503582",
 ]
+
+
+def regression_inputs_available() -> bool:
+    cache_dir = Path.cwd() / ".easyeda_cache"
+    if cache_dir.is_dir() and all(
+        (cache_dir / f"{component_id}.json").is_file()
+        for component_id in TEST_COMPONENTS
+    ):
+        return True
+
+    try:
+        socket.getaddrinfo("easyeda.com", 443)
+    except OSError:
+        return False
+    return True
+
+
+@pytest.fixture(scope="module", autouse=True)
+def require_regression_inputs() -> None:
+    if not regression_inputs_available():
+        pytest.skip(
+            "Regression tests require EasyEDA API access or a populated .easyeda_cache",
+            allow_module_level=True,
+        )
 
 
 class TestCreateReference:
