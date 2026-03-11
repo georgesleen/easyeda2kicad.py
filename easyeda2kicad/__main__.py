@@ -100,6 +100,17 @@ def get_parser() -> argparse.ArgumentParser:
         metavar="KEY:VALUE",
         help="Add a custom symbol property. May be passed multiple times.",
     )
+    parser.add_argument(
+        "--footprint-link-mode",
+        choices=["generated", "explicit", "none"],
+        default="generated",
+        help="Control how the symbol Footprint property is written",
+    )
+    parser.add_argument(
+        "--footprint-link",
+        help="Exact Library:Footprint ref used when --footprint-link-mode=explicit",
+        type=str,
+    )
 
     parser.add_argument(
         "--overwrite",
@@ -151,6 +162,29 @@ def valid_arguments(arguments: dict[str, Any]) -> bool:
     except ValueError as err:
         logging.error(str(err))
         return False
+
+    if arguments["footprint_link_mode"] == "explicit":
+        footprint_link = (arguments.get("footprint_link") or "").strip()
+        if not footprint_link:
+            logging.error(
+                "--footprint-link is required when --footprint-link-mode=explicit"
+            )
+            return False
+        if (
+            ":" not in footprint_link
+            or footprint_link.startswith(":")
+            or footprint_link.endswith(":")
+        ):
+            logging.error("--footprint-link must match Library:Footprint")
+            return False
+        arguments["footprint_link"] = footprint_link
+    elif arguments.get("footprint_link"):
+        logging.error(
+            "--footprint-link may only be used with --footprint-link-mode=explicit"
+        )
+        return False
+    else:
+        arguments["footprint_link"] = ""
 
     kicad_version = KicadVersion.v6
     arguments["kicad_version"] = kicad_version
@@ -276,7 +310,11 @@ def _process_symbol(
         symbol=easyeda_symbol,
         kicad_version=kicad_version,
         custom_fields=arguments["custom_fields"],
-    ).export(footprint_lib_name=footprint_lib_name)
+    ).export(
+        footprint_lib_name=footprint_lib_name,
+        footprint_link_mode=arguments["footprint_link_mode"],
+        footprint_link_value=arguments["footprint_link"],
+    )
 
     if is_id_already_in_symbol_lib:
         update_component_in_symbol_lib_file(
