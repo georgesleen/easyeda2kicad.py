@@ -1,6 +1,5 @@
-# Global imports
 import logging
-from typing import Callable, List, Tuple, Union
+from typing import Callable, Dict, List, Tuple, Union
 
 from easyeda2kicad.easyeda.parameters_easyeda import (
     EasyedaPinType,
@@ -300,7 +299,11 @@ def convert_ee_paths(
     return kicad_polygons, kicad_beziers
 
 
-def convert_to_kicad(ee_symbol: EeSymbol, kicad_version: KicadVersion) -> KiSymbol:
+def convert_to_kicad(
+    ee_symbol: EeSymbol,
+    kicad_version: KicadVersion,
+    custom_fields: Dict[str, str],
+) -> KiSymbol:
 
     ki_info = KiSymbolInfo(
         name=ee_symbol.info.name,
@@ -310,6 +313,7 @@ def convert_to_kicad(ee_symbol: EeSymbol, kicad_version: KicadVersion) -> KiSymb
         datasheet=ee_symbol.info.datasheet,
         lcsc_id=ee_symbol.info.lcsc_id,
         jlc_id=ee_symbol.info.jlc_id,
+        custom_fields=custom_fields,
     )
 
     kicad_symbol = KiSymbol(
@@ -359,11 +363,17 @@ def tune_footprint_ref_path(ki_symbol: KiSymbol, footprint_lib_name: str):
 
 
 class ExporterSymbolKicad:
-    def __init__(self, symbol, kicad_version: KicadVersion):
+    def __init__(
+        self, symbol, kicad_version: KicadVersion, custom_fields: Dict[str, str]
+    ):
         self.input: EeSymbol = symbol
         self.version = kicad_version
         self.output = (
-            convert_to_kicad(ee_symbol=self.input, kicad_version=kicad_version)
+            convert_to_kicad(
+                ee_symbol=self.input,
+                kicad_version=kicad_version,
+                custom_fields=custom_fields,
+            )
             if isinstance(self.input, EeSymbol)
             else logging.error("Unknown input symbol format")
         )

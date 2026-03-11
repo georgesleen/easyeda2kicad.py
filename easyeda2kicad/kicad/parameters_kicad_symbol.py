@@ -4,7 +4,7 @@ import re
 import textwrap
 from dataclasses import dataclass, field, fields
 from enum import Enum, auto
-from typing import List, Union
+from typing import Dict, List, Union
 
 
 class KicadVersion(Enum):
@@ -140,6 +140,7 @@ class KiSymbolInfo:
     datasheet: str
     lcsc_id: str
     jlc_id: str
+    custom_fields: Dict[str, str] = field(default_factory=dict)
     y_low: Union[int, float] = 0
     y_high: Union[int, float] = 0
 
@@ -226,90 +227,84 @@ class KiSymbolInfo:
         )
 
         field_offset_y = KiExportConfigV6.FIELD_OFFSET_START.value
-        header: List[str] = [
-            property_template.format(
-                key="Reference",
-                value=self.prefix,
-                id_=0,
-                pos_y=self.y_high + field_offset_y,
-                font_size=KiExportConfigV6.PROPERTY_FONT_SIZE.value,
-                style="",
-                hide="",
-            ),
-            property_template.format(
-                key="Value",
-                value=self.name,
-                id_=1,
-                pos_y=self.y_low - field_offset_y,
-                font_size=KiExportConfigV6.PROPERTY_FONT_SIZE.value,
-                style="",
-                hide="",
-            ),
-        ]
-        if self.package:
-            field_offset_y += KiExportConfigV6.FIELD_OFFSET_INCREMENT.value
+        next_property_id = 0
+        header: List[str] = []
+
+        def append_property(key: str, value: str, pos_y: Union[int, float], hide: bool):
+            nonlocal next_property_id
             header.append(
                 property_template.format(
-                    key="Footprint",
-                    value=self.package,
-                    id_=2,
-                    pos_y=self.y_low - field_offset_y,
+                    key=key,
+                    value=value,
+                    id_=next_property_id,
+                    pos_y=pos_y,
                     font_size=KiExportConfigV6.PROPERTY_FONT_SIZE.value,
                     style="",
-                    hide="hide",
+                    hide="hide" if hide else "",
                 )
+            )
+            next_property_id += 1
+
+        append_property(
+            key="Reference",
+            value=self.prefix,
+            pos_y=self.y_high + field_offset_y,
+            hide=False,
+        )
+        append_property(
+            key="Value",
+            value=self.name,
+            pos_y=self.y_low - field_offset_y,
+            hide=False,
+        )
+
+        if self.package:
+            field_offset_y += KiExportConfigV6.FIELD_OFFSET_INCREMENT.value
+            append_property(
+                key="Footprint",
+                value=self.package,
+                pos_y=self.y_low - field_offset_y,
+                hide=True,
             )
         if self.datasheet:
             field_offset_y += KiExportConfigV6.FIELD_OFFSET_INCREMENT.value
-            header.append(
-                property_template.format(
-                    key="Datasheet",
-                    value=self.datasheet,
-                    id_=3,
-                    pos_y=self.y_low - field_offset_y,
-                    font_size=KiExportConfigV6.PROPERTY_FONT_SIZE.value,
-                    style="",
-                    hide="hide",
-                )
+            append_property(
+                key="Datasheet",
+                value=self.datasheet,
+                pos_y=self.y_low - field_offset_y,
+                hide=True,
             )
         if self.manufacturer:
             field_offset_y += KiExportConfigV6.FIELD_OFFSET_INCREMENT.value
-            header.append(
-                property_template.format(
-                    key="Manufacturer",
-                    value=self.manufacturer,
-                    id_=4,
-                    pos_y=self.y_low - field_offset_y,
-                    font_size=KiExportConfigV6.PROPERTY_FONT_SIZE.value,
-                    style="",
-                    hide="hide",
-                )
+            append_property(
+                key="Manufacturer",
+                value=self.manufacturer,
+                pos_y=self.y_low - field_offset_y,
+                hide=True,
             )
         if self.lcsc_id:
             field_offset_y += KiExportConfigV6.FIELD_OFFSET_INCREMENT.value
-            header.append(
-                property_template.format(
-                    key="LCSC Part",
-                    value=self.lcsc_id,
-                    id_=5,
-                    pos_y=self.y_low - field_offset_y,
-                    font_size=KiExportConfigV6.PROPERTY_FONT_SIZE.value,
-                    style="",
-                    hide="hide",
-                )
+            append_property(
+                key="LCSC Part",
+                value=self.lcsc_id,
+                pos_y=self.y_low - field_offset_y,
+                hide=True,
             )
         if self.jlc_id:
             field_offset_y += KiExportConfigV6.FIELD_OFFSET_INCREMENT.value
-            header.append(
-                property_template.format(
-                    key="JLC Part",
-                    value=self.jlc_id,
-                    id_=6,
-                    pos_y=self.y_low - field_offset_y,
-                    font_size=KiExportConfigV6.PROPERTY_FONT_SIZE.value,
-                    style="",
-                    hide="hide",
-                )
+            append_property(
+                key="JLC Part",
+                value=self.jlc_id,
+                pos_y=self.y_low - field_offset_y,
+                hide=True,
+            )
+        for key, value in self.custom_fields.items():
+            field_offset_y += KiExportConfigV6.FIELD_OFFSET_INCREMENT.value
+            append_property(
+                key=key,
+                value=value,
+                pos_y=self.y_low - field_offset_y,
+                hide=True,
             )
 
         return header

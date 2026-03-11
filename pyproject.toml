@@ -1,20 +1,63 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "easyeda2kicad"
+description = "A Python script that convert any electronic components from LCSC or EasyEDA to a Kicad library"
+readme = "README.md"
+dynamic = ["version"]
+authors = [
+    { name = "uPesy + George Sleen", email = "george@bluerobotics.com" },
+]
+license = { text = "AGPL-3.0" }
+requires-python = ">=3.8"
+dependencies = [
+    "pydantic>=2.0.0",
+    "requests>2.0.0",
+]
+keywords = ["easyeda", "kicad", "library", "conversion"]
+classifiers = [
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: GNU Affero General Public License v3",
+    "Natural Language :: English",
+    "Programming Language :: Python :: 3",
+    "Topic :: Scientific/Engineering :: Electronic Design Automation (EDA)",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pre-commit>=2.17.0",
+]
+
+[project.urls]
+Code = "https://github.com/GeorgeSleen-BR/easyeda2kicad.py"
+
+[project.scripts]
+easyeda2kicad = "easyeda2kicad.__main__:main"
+
+[tool.setuptools.dynamic]
+version = { attr = "easyeda2kicad.__version__" }
+
+[tool.setuptools.packages.find]
+exclude = ["tests", "utils"]
+
 [tool.black]
 line-length = 88
 preview = true
 
 [tool.isort]
 profile = "black"
-extend_skip = [".md", ".json", ".po", ".mo",".html", ".js", ".css", ".rst"]
+extend_skip = [".md", ".json", ".po", ".mo", ".html", ".js", ".css", ".rst"]
 skip_glob = ["env/*"]
 known_local_folder = ["core"]
-import_heading_stdlib="Global imports"
-import_heading_localfolder="Local imports"
+import_heading_stdlib = "Global imports"
+import_heading_localfolder = "Local imports"
 
 [tool.pycln]
-include=".*\\.py$"
-exclude="(.eggs|.git|.hg|.mypy_cache|__pycache__|.nox|.tox|.venv|.svn|buck-out|build|dist|env|)/"
+include = ".*\\.py$"
+exclude = "(.eggs|.git|.hg|.mypy_cache|__pycache__|.nox|.tox|.venv|.svn|buck-out|build|dist|env|)/"
 
-# https://mypy.readthedocs.io/en/stable/config_file.html
 [tool.mypy]
 python_version = 3.8
 ignore_missing_imports = true
@@ -27,10 +70,8 @@ pretty = true
 
 [tool.pylint.master]
 output-format = "colorized"
-extension-pkg-whitelist = [
-    "pydantic"
-]
-ignore="(.eggs|.git|.hg|.mypy_cache|__pycache__|.nox|.tox|.venv|.svn|buck-out|build|dist|env|)/"
+extension-pkg-whitelist = ["pydantic"]
+ignore = "(.eggs|.git|.hg|.mypy_cache|__pycache__|.nox|.tox|.venv|.svn|buck-out|build|dist|env|)/"
 
 [tool.pylint.format]
 max-line-length = 88
@@ -45,10 +86,7 @@ disable = [
     "missing-class-docstring",
     "missing-function-docstring",
     "logging-fstring-interpolation",
-
-
 ]
 
 [tool.bandit]
-# tests = ["B201", "B301"]
 skips = []

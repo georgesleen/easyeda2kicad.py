@@ -117,14 +117,20 @@ class EasyedaSymbolImporter:
         return self.output
 
     def extract_easyeda_data(self, ee_data: dict, ee_data_info: dict) -> EeSymbol:
+        lcsc_data = ee_data.get("lcsc", {})
+        lcsc_id = lcsc_data.get("number", None)
+        datasheet_url = lcsc_data.get("url", None) or (
+            f"https://www.lcsc.com/datasheet/{lcsc_id}.pdf" if lcsc_id else None
+        )
+
         new_ee_symbol = EeSymbol(
             info=EeSymbolInfo(
                 name=ee_data_info["name"],
                 prefix=ee_data_info["pre"],
                 package=ee_data_info.get("package", None),
                 manufacturer=ee_data_info.get("BOM_Manufacturer", None),
-                datasheet=ee_data["lcsc"].get("url", None),
-                lcsc_id=ee_data["lcsc"].get("number", None),
+                datasheet=datasheet_url,
+                lcsc_id=lcsc_id,
                 jlc_id=ee_data_info.get("BOM_JLCPCB Part Class", None),
             ),
             bbox=EeSymbolBbox(

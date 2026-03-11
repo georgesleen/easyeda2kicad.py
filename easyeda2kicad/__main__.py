@@ -5,7 +5,7 @@ import os
 import re
 import sys
 from textwrap import dedent
-from typing import List
+from typing import Dict, List
 
 from easyeda2kicad import __version__
 from easyeda2kicad.easyeda.easyeda_api import EasyedaApi
@@ -27,6 +27,27 @@ from easyeda2kicad.kicad.export_kicad_3d_model import Exporter3dModelKicad
 from easyeda2kicad.kicad.export_kicad_footprint import ExporterFootprintKicad
 from easyeda2kicad.kicad.export_kicad_symbol import ExporterSymbolKicad
 from easyeda2kicad.kicad.parameters_kicad_symbol import KicadVersion
+
+
+def parse_custom_fields(custom_field_args: List[str]) -> Dict[str, str]:
+    custom_fields: Dict[str, str] = {}
+    for custom_field in custom_field_args:
+        key, separator, value = custom_field.partition(":")
+        key = key.strip()
+        value = value.strip()
+
+        if not separator:
+            raise ValueError(
+                f'Invalid custom field "{custom_field}". Expected KEY:VALUE.'
+            )
+        if not key:
+            raise ValueError(
+                f'Invalid custom field "{custom_field}". Key must not be empty.'
+            )
+
+        custom_fields[key] = value
+
+    return custom_fields
 
 
 def get_parser() -> argparse.ArgumentParser:
@@ -69,7 +90,7 @@ def get_parser() -> argparse.ArgumentParser:
         "--output",
         required=False,
         metavar="file.kicad_sym",
-        help="Output file",
+        help="Library base path to create or append to",
         type=str,
     )
 
@@ -77,10 +98,19 @@ def get_parser() -> argparse.ArgumentParser:
         "--overwrite",
         required=False,
         help=(
-            "overwrite symbol and footprint lib if there is already a component with"
-            " this lcsc_id"
+            "replace an existing symbol or footprint already present in the target"
+            " library"
         ),
         action="store_true",
+    )
+
+    parser.add_argument(
+        "--custom-field",
+        required=False,
+        action="append",
+        default=[],
+        metavar="KEY:VALUE",
+        help="Add a custom symbol property (repeatable, KiCad v6 symbol export only)",
     )
 
     parser.add_argument(
@@ -127,6 +157,18 @@ def valid_arguments(arguments: dict) -> bool:
 
     kicad_version = KicadVersion.v5 if arguments.get("v5") else KicadVersion.v6
     arguments["kicad_version"] = kicad_version
+
+    try:
+        arguments["custom_fields"] = parse_custom_fields(
+            custom_field_args=arguments["custom_field"]
+        )
+    except ValueError as err:
+        logging.error(err)
+        return False
+
+    if arguments["custom_fields"] and kicad_version == KicadVersion.v5:
+        logging.error("--custom-field is currently supported only for KiCad v6")
+        return False
 
     if arguments["project_relative"] and not arguments["output"]:
         logging.error(
@@ -280,7 +322,9 @@ def main(argv: List[str] = sys.argv[1:]) -> int:
             return 1
 
         exporter = ExporterSymbolKicad(
-            symbol=easyeda_symbol, kicad_version=kicad_version
+            symbol=easyeda_symbol,
+            kicad_version=kicad_version,
+            custom_fields=arguments["custom_fields"],
         )
         # print(exporter.output)
         kicad_symbol_lib = exporter.export(
