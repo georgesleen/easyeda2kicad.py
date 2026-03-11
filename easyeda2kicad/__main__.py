@@ -197,14 +197,6 @@ def prompt_for_arguments(arguments: dict) -> None:
             "Overwrite existing symbol/footprint if already present?", default=False
         )
 
-    if arguments["symbol"] and not arguments["v5"]:
-        if arguments["custom_field"]:
-            logging.info("Custom fields require KiCad v6 symbol output.")
-        else:
-            arguments["v5"] = prompt_yes_no(
-                "Use KiCad v5 legacy symbol format?", default=False
-            )
-
     if arguments["footprint"] and not arguments["project_relative"]:
         arguments["project_relative"] = prompt_yes_no(
             "Store 3D path relative to the project?", default=False

@@ -113,7 +113,7 @@ Interactive mode currently prompts for:
 - missing required values like `lcsc_id` and export actions
 - output path selection
 - overwrite preference
-- KiCad v5 / project-relative path choices when relevant
+- project-relative path choice when relevant
 - repeatable custom symbol properties through an add-another loop
 
 If a symbol or footprint already exists in the target library during an interactive run, the tool prompts before overwriting instead of requiring a rerun with `--overwrite`.
