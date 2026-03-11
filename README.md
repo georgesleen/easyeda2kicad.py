@@ -1,4 +1,4 @@
-# easyeda2kicad v0.9.0
+# easyeda2kicad v0.10.0
 
 _________________
 [![PyPI version](https://badge.fury.io/py/easyeda2kicad.svg)](https://badge.fury.io/py/easyeda2kicad)
@@ -51,6 +51,8 @@ easyeda2kicad --symbol --footprint --lcsc_id=C2040
 easyeda2kicad --symbol --lcsc_id=C2040
 # For symbol only with extra KiCad symbol properties
 easyeda2kicad --symbol --lcsc_id=C2040 --custom-field "Manufacturer:Texas Instruments" --custom-field "LCSC ID:C2040"
+# For symbol only with an explicit footprint reference
+easyeda2kicad --symbol --lcsc_id=C2040 --footprint-link-mode explicit --footprint-link "CorpLib:CustomPart"
 # For a guided terminal session
 easyeda2kicad --interactive
 # For footprint only
@@ -102,6 +104,12 @@ Malformed `--custom-field` values fail fast, and if the same key is provided mor
 
 When EasyEDA/LCSC does not provide a datasheet URL, the generated symbol datasheet field falls back to `https://www.lcsc.com/datasheet/<LCSC-ID>.pdf`.
 
+The generated symbol `Footprint` field can be controlled with:
+
+- `--footprint-link-mode generated` to keep the default behavior
+- `--footprint-link-mode explicit --footprint-link "Library:Footprint"` to force an explicit reference
+- `--footprint-link-mode none` to leave the symbol footprint field empty
+
 Interactive terminal mode is available with `--interactive`. In a terminal, the tool can also prompt automatically when required arguments are missing.
 
 ```bash
@@ -116,7 +124,78 @@ Interactive mode currently prompts for:
 - project-relative path choice when relevant
 - repeatable custom symbol properties through an add-another loop
 
+Interactive mode can also show a summary and ask for confirmation before creating or updating output files. This can be configured in YAML.
+
 If a symbol or footprint already exists in the target library during an interactive run, the tool prompts before overwriting instead of requiring a rerun with `--overwrite`.
+
+## ⚙️ YAML Config
+
+`easyeda2kicad` can load defaults from YAML.
+
+Config discovery order:
+
+1. `--config /path/to/easyeda2kicad.yaml`
+2. `EASYEDA2KICAD_CONFIG=/path/to/easyeda2kicad.yaml`
+3. `./easyeda2kicad.yaml`
+4. `./easyeda2kicad.yml`
+
+Write a starter config file with:
+
+```bash
+easyeda2kicad --write-default-config
+```
+
+Example `easyeda2kicad.yaml`:
+
+```yaml
+version: 1
+
+defaults:
+  actions:
+    symbol: true
+    footprint: true
+    model_3d: true
+
+  interactive:
+    enabled: auto
+    confirm_before_apply: true
+
+  output:
+    base_path:
+    overwrite: false
+    project_relative: false
+
+  symbol:
+    custom_fields:
+      Manufacturer: Texas Instruments
+      Package: SOT-23-5
+    footprint_link:
+      mode: generated
+```
+
+Config precedence is:
+
+1. explicit CLI flags
+2. YAML config
+3. built-in defaults
+
+For config-backed booleans and lists, use these CLI flags to override YAML defaults explicitly:
+
+- `--overwrite` or `--no-overwrite`
+- `--project-relative` or `--no-project-relative`
+- `--custom-field KEY:VALUE` or `--no-custom-fields`
+
+Supported footprint link config values:
+
+```yaml
+defaults:
+  symbol:
+    footprint_link:
+      mode: generated | explicit | none
+      value:
+```
+
+For `mode: explicit`, set `value` to `Library:Footprint`.
 
 ## 🔗 Add libraries in Kicad
 

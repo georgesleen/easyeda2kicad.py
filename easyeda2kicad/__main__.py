@@ -4,10 +4,18 @@ import logging
 import os
 import re
 import sys
+from pathlib import Path
 from textwrap import dedent
 from typing import Dict, List, Optional, Tuple
 
 from easyeda2kicad import __version__
+from easyeda2kicad.config import (
+    ConfigError,
+    apply_config_defaults,
+    load_config,
+    resolve_config_path,
+    write_default_config,
+)
 from easyeda2kicad.easyeda.easyeda_api import EasyedaApi
 from easyeda2kicad.easyeda.easyeda_importer import (
     Easyeda3dModelImporter,
@@ -17,7 +25,6 @@ from easyeda2kicad.easyeda.easyeda_importer import (
 from easyeda2kicad.easyeda.parameters_easyeda import EeSymbol
 from easyeda2kicad.helpers import (
     add_component_in_symbol_lib_file,
-    get_local_config,
     id_already_in_symbol_lib,
     set_logger,
     update_component_in_symbol_lib_file,
@@ -151,6 +158,9 @@ def prompt_for_output_path(
 
 
 def prompt_for_custom_fields(arguments: dict) -> None:
+    if arguments["custom_field"] is None:
+        arguments["custom_field"] = []
+
     wants_custom_fields = prompt_yes_no(
         "Add more custom symbol properties?"
         if arguments["custom_field"]
@@ -212,13 +222,96 @@ def prompt_for_arguments(arguments: dict) -> None:
         prompt_for_custom_fields(arguments)
 
 
+def ensure_output_targets(arguments: dict) -> None:
+    output_base_path = arguments["output"]
+    base_folder = os.path.dirname(output_base_path)
+    lib_name = os.path.basename(output_base_path)
+
+    os.makedirs(base_folder, exist_ok=True)
+
+    if arguments["footprint"] and not os.path.isdir(f"{output_base_path}.pretty"):
+        os.mkdir(f"{output_base_path}.pretty")
+        logging.info(f"Created {lib_name}.pretty footprint folder in {base_folder}")
+
+    if arguments["3d"] and not os.path.isdir(f"{output_base_path}"):
+        os.mkdir(f"{output_base_path}")
+        logging.info(f"Created {lib_name} 3D model folder in {base_folder}")
+
+    if arguments["symbol"]:
+        lib_extension = (
+            "kicad_sym"
+            if arguments["kicad_version"] == KicadVersion.v6
+            else "lib"
+        )
+        symbol_lib_path = f"{output_base_path}.{lib_extension}"
+        if not os.path.isfile(symbol_lib_path):
+            with open(file=symbol_lib_path, mode="w+", encoding="utf-8") as my_lib:
+                my_lib.write(
+                    dedent(
+                        """\
+                    (kicad_symbol_lib
+                      (version 20211014)
+                      (generator https://github.com/georgesleen/easyeda2kicad.py)
+                    )"""
+                    )
+                    if arguments["kicad_version"] == KicadVersion.v6
+                    else "EESchema-LIBRARY Version 2.4\n#encoding utf-8\n"
+                )
+            logging.info(f"Created {lib_name}.{lib_extension} symbol lib in {base_folder}")
+
+
+def summarize_plan(arguments: dict) -> str:
+    action_names = [
+        name
+        for name, enabled in (
+            ("symbol", arguments["symbol"]),
+            ("footprint", arguments["footprint"]),
+            ("3d", arguments["3d"]),
+        )
+        if enabled
+    ]
+    custom_fields = arguments.get("custom_fields", {})
+    custom_fields_summary = (
+        ", ".join(f"{key}={value}" for key, value in custom_fields.items())
+        if custom_fields
+        else "none"
+    )
+    return "\n".join(
+        [
+            "Planned export:",
+            f"  LCSC ID: {arguments['lcsc_id']}",
+            f"  Actions: {', '.join(action_names)}",
+            f"  Output base path: {arguments['output']}",
+            f"  Overwrite existing entries: {'yes' if arguments['overwrite'] else 'no'}",
+            f"  Project-relative 3D paths: {'yes' if arguments['project_relative'] else 'no'}",
+            f"  Footprint link mode: {arguments['footprint_link_mode']}",
+            (
+                f"  Footprint link value: {arguments['footprint_link']}"
+                if arguments["footprint_link_mode"] == "explicit"
+                else "  Footprint link value: n/a"
+            ),
+            f"  Custom symbol fields: {custom_fields_summary}",
+            (
+                f"  Config file: {arguments['config_path']}"
+                if arguments.get("config_path")
+                else "  Config file: none"
+            ),
+        ]
+    )
+
+
 def should_use_interactive(arguments: dict) -> bool:
+    interactive_default_mode = arguments.get("interactive_default_mode", "auto")
     missing_required_arguments = not arguments.get("lcsc_id") or not any(
         [arguments["symbol"], arguments["footprint"], arguments["3d"]]
     )
-    return arguments["interactive"] or (
-        missing_required_arguments and is_interactive_terminal()
-    )
+    if arguments["interactive"]:
+        return is_interactive_terminal()
+    if interactive_default_mode == "true":
+        return is_interactive_terminal()
+    if interactive_default_mode == "false":
+        return False
+    return missing_required_arguments and is_interactive_terminal()
 
 
 def prompt_overwrite_for_duplicate(item_name: str) -> bool:
@@ -277,15 +370,57 @@ def get_parser() -> argparse.ArgumentParser:
             " library"
         ),
         action="store_true",
+        default=None,
+    )
+    parser.add_argument(
+        "--no-overwrite",
+        required=False,
+        dest="overwrite",
+        help="Do not overwrite existing symbol or footprint entries",
+        action="store_false",
     )
 
     parser.add_argument(
         "--custom-field",
         required=False,
         action="append",
-        default=[],
+        default=None,
         metavar="KEY:VALUE",
         help="Add a custom symbol property (repeatable, KiCad v6 symbol export only)",
+    )
+    parser.add_argument(
+        "--no-custom-fields",
+        required=False,
+        help="Ignore custom fields provided by config defaults",
+        action="store_true",
+    )
+
+    parser.add_argument(
+        "--footprint-link-mode",
+        required=False,
+        choices=("generated", "explicit", "none"),
+        help="How the symbol Footprint field should be written",
+    )
+
+    parser.add_argument(
+        "--footprint-link",
+        required=False,
+        help="Exact Library:Footprint ref used when --footprint-link-mode=explicit",
+        type=str,
+    )
+
+    parser.add_argument(
+        "--config",
+        required=False,
+        help="Path to an easyeda2kicad YAML config file",
+        type=str,
+    )
+
+    parser.add_argument(
+        "--write-default-config",
+        required=False,
+        help="Write a starter easyeda2kicad.yaml file to the current directory and exit",
+        action="store_true",
     )
 
     parser.add_argument(
@@ -307,6 +442,14 @@ def get_parser() -> argparse.ArgumentParser:
         required=False,
         help="Sets the 3D file path stored relative to the project",
         action="store_true",
+        default=None,
+    )
+    parser.add_argument(
+        "--no-project-relative",
+        required=False,
+        dest="project_relative",
+        help="Do not store the 3D file path relative to the project",
+        action="store_false",
     )
 
     parser.add_argument(
@@ -343,6 +486,9 @@ def valid_arguments(arguments: dict) -> bool:
 
     kicad_version = KicadVersion.v5 if arguments.get("v5") else KicadVersion.v6
     arguments["kicad_version"] = kicad_version
+    arguments["custom_field"] = arguments.get("custom_field") or []
+    arguments["overwrite"] = bool(arguments.get("overwrite"))
+    arguments["project_relative"] = bool(arguments.get("project_relative"))
 
     try:
         arguments["custom_fields"] = parse_custom_fields(
@@ -355,6 +501,24 @@ def valid_arguments(arguments: dict) -> bool:
     if arguments["custom_fields"] and kicad_version == KicadVersion.v5:
         logging.error("--custom-field is currently supported only for KiCad v6")
         return False
+
+    if not arguments.get("footprint_link_mode"):
+        arguments["footprint_link_mode"] = "generated"
+
+    if arguments["footprint_link_mode"] == "explicit":
+        footprint_link = (arguments.get("footprint_link") or "").strip()
+        if not footprint_link:
+            logging.error("--footprint-link is required when --footprint-link-mode=explicit")
+            return False
+        if ":" not in footprint_link or footprint_link.startswith(":") or footprint_link.endswith(":"):
+            logging.error("--footprint-link must match Library:Footprint")
+            return False
+        arguments["footprint_link"] = footprint_link
+    elif arguments.get("footprint_link"):
+        logging.error("--footprint-link may only be used with --footprint-link-mode=explicit")
+        return False
+    else:
+        arguments["footprint_link"] = ""
 
     if arguments["project_relative"] and not arguments["output"]:
         logging.error(
@@ -376,46 +540,11 @@ def valid_arguments(arguments: dict) -> bool:
         default_folder = os.path.join(
             os.path.dirname(get_default_output_base_path()),
         )
-        if not os.path.isdir(default_folder):
-            os.makedirs(default_folder, exist_ok=True)
-
         base_folder = default_folder
         lib_name = "easyeda2kicad"
         arguments["use_default_folder"] = True
 
     arguments["output"] = f"{base_folder}/{lib_name}"
-
-    # Create new footprint folder if it does not exist
-    if arguments["footprint"]:
-        if not os.path.isdir(f"{arguments['output']}.pretty"):
-            os.mkdir(f"{arguments['output']}.pretty")
-            logging.info(f"Created {lib_name}.pretty footprint folder in {base_folder}")
-
-    # Create new 3d model folder if it does not exist
-    if arguments["3d"]:
-        if not os.path.isdir(f"{arguments['output']}"):
-            os.mkdir(f"{arguments['output']}")
-            logging.info(f"Created {lib_name} 3D model folder in {base_folder}")
-
-    # Create new symbol file if it does not exist
-    if arguments["symbol"]:
-        lib_extension = "kicad_sym" if kicad_version == KicadVersion.v6 else "lib"
-        if not os.path.isfile(f"{arguments['output']}.{lib_extension}"):
-            with open(
-                file=f"{arguments['output']}.{lib_extension}", mode="w+", encoding="utf-8"
-            ) as my_lib:
-                my_lib.write(
-                    dedent(
-                        """\
-                    (kicad_symbol_lib
-                      (version 20211014)
-                      (generator https://github.com/georgesleen/easyeda2kicad.py)
-                    )"""
-                    )
-                    if kicad_version == KicadVersion.v6
-                    else "EESchema-LIBRARY Version 2.4\n#encoding utf-8\n"
-                )
-            logging.info(f"Created {lib_name}.{lib_extension} symbol lib in {base_folder}")
 
     return True
 
@@ -459,6 +588,26 @@ def main(argv: List[str] = sys.argv[1:]) -> int:
     else:
         set_logger(log_file=None, log_level=logging.INFO)
 
+    if arguments["write_default_config"]:
+        default_config_path = resolve_config_path(arguments.get("config")) or (
+            Path.cwd() / "easyeda2kicad.yaml"
+        )
+        try:
+            write_default_config(path=default_config_path)
+        except ConfigError as err:
+            logging.error(err)
+            return 1
+        logging.info(f"Wrote default config to {default_config_path}")
+        return 0
+
+    try:
+        config, config_path = load_config(arguments.get("config"))
+    except ConfigError as err:
+        logging.error(err)
+        return 1
+    arguments["config_path"] = str(config_path) if config_path else None
+    apply_config_defaults(arguments, config)
+
     if arguments["interactive"] and not is_interactive_terminal():
         logging.error("--interactive requires an interactive terminal")
         return 1
@@ -474,7 +623,13 @@ def main(argv: List[str] = sys.argv[1:]) -> int:
     if not valid_arguments(arguments=arguments):
         return 1
 
-    # conf = get_local_config()
+    if arguments["interactive_session"] and arguments.get("confirm_before_apply", True):
+        print(summarize_plan(arguments))
+        if not prompt_yes_no("Proceed with export?", default=True):
+            logging.error("Interactive export cancelled")
+            return 1
+
+    ensure_output_targets(arguments)
 
     component_id = arguments["lcsc_id"]
     kicad_version = arguments["kicad_version"]
@@ -528,6 +683,8 @@ def main(argv: List[str] = sys.argv[1:]) -> int:
             # print(exporter.output)
             kicad_symbol_lib = exporter.export(
                 footprint_lib_name=arguments["output"].split("/")[-1].split(".")[0],
+                footprint_link_mode=arguments["footprint_link_mode"],
+                footprint_link_value=arguments["footprint_link"],
             )
 
             if is_id_already_in_symbol_lib:
