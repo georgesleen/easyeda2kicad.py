@@ -5,7 +5,7 @@ import os
 import re
 import sys
 from textwrap import dedent
-from typing import Dict, List
+from typing import Dict, List, Optional, Tuple
 
 from easyeda2kicad import __version__
 from easyeda2kicad.easyeda.easyeda_api import EasyedaApi
@@ -29,6 +29,10 @@ from easyeda2kicad.kicad.export_kicad_symbol import ExporterSymbolKicad
 from easyeda2kicad.kicad.parameters_kicad_symbol import KicadVersion
 
 
+class InteractiveAbortError(Exception):
+    pass
+
+
 def parse_custom_fields(custom_field_args: List[str]) -> Dict[str, str]:
     custom_fields: Dict[str, str] = {}
     for custom_field in custom_field_args:
@@ -50,6 +54,185 @@ def parse_custom_fields(custom_field_args: List[str]) -> Dict[str, str]:
     return custom_fields
 
 
+def get_default_output_base_path() -> str:
+    return os.path.join(
+        os.path.expanduser("~"),
+        "Documents",
+        "Kicad",
+        "easyeda2kicad",
+        "easyeda2kicad",
+    )
+
+
+def parse_output_base_path(output: str) -> Tuple[str, str]:
+    normalized_output = output.replace("\\", "/")
+    return (
+        "/".join(normalized_output.split("/")[:-1]),
+        normalized_output.split("/")[-1].split(".lib")[0].split(".kicad_sym")[0],
+    )
+
+
+def prompt_text(prompt: str) -> str:
+    try:
+        return input(prompt)
+    except (EOFError, KeyboardInterrupt) as err:
+        raise InteractiveAbortError from err
+
+
+def is_interactive_terminal() -> bool:
+    return sys.stdin.isatty() and sys.stdout.isatty()
+
+
+def prompt_yes_no(prompt: str, default: bool = False) -> bool:
+    suffix = "[Y/n]" if default else "[y/N]"
+    while True:
+        answer = prompt_text(f"{prompt} {suffix}: ").strip().lower()
+        if not answer:
+            return default
+        if answer in {"y", "yes"}:
+            return True
+        if answer in {"n", "no"}:
+            return False
+        print("Please answer yes or no.")
+
+
+def prompt_for_lcsc_id() -> str:
+    while True:
+        lcsc_id = prompt_text("LCSC ID: ").strip().upper()
+        if lcsc_id.startswith("C"):
+            return lcsc_id
+        print("LCSC ID must start with C.")
+
+
+def prompt_for_actions(arguments: dict) -> None:
+    while True:
+        raw_selection = prompt_text(
+            "Select outputs [symbol/footprint/3d/full]: "
+        ).strip().lower()
+
+        if raw_selection == "full":
+            arguments["full"] = True
+            arguments["symbol"] = True
+            arguments["footprint"] = True
+            arguments["3d"] = True
+            return
+
+        selected_actions = {
+            token.strip()
+            for token in raw_selection.split(",")
+            if token.strip()
+        }
+        if selected_actions and selected_actions.issubset({"symbol", "footprint", "3d"}):
+            arguments["full"] = False
+            arguments["symbol"] = "symbol" in selected_actions
+            arguments["footprint"] = "footprint" in selected_actions
+            arguments["3d"] = "3d" in selected_actions
+            return
+
+        print("Enter 'full' or a comma-separated list of symbol, footprint, and 3d.")
+
+
+def prompt_for_output_path(
+    prompt: str, allow_blank: bool = True
+) -> Optional[str]:
+    while True:
+        output_path = prompt_text(prompt).strip()
+        if not output_path and allow_blank:
+            return None
+        if not output_path:
+            print("An explicit output path is required here.")
+            continue
+
+        base_folder, _lib_name = parse_output_base_path(output=output_path)
+        if os.path.isdir(base_folder):
+            return output_path
+
+        print(f"Can't find the folder: {base_folder}")
+
+
+def prompt_for_custom_fields(arguments: dict) -> None:
+    wants_custom_fields = prompt_yes_no(
+        "Add more custom symbol properties?"
+        if arguments["custom_field"]
+        else "Add custom symbol properties?",
+        default=False,
+    )
+    while wants_custom_fields:
+        custom_field = prompt_text("Custom field (KEY:VALUE): ").strip()
+        try:
+            custom_fields = parse_custom_fields([custom_field])
+        except ValueError as err:
+            print(err)
+            continue
+
+        new_key = next(iter(custom_fields))
+        existing_fields = parse_custom_fields(arguments["custom_field"])
+        if new_key in existing_fields:
+            print(f"Replacing custom field '{new_key}'.")
+
+        arguments["custom_field"].append(custom_field)
+        wants_custom_fields = prompt_yes_no(
+            "Add another custom field?", default=False
+        )
+
+
+def prompt_for_arguments(arguments: dict) -> None:
+    if not arguments.get("lcsc_id"):
+        arguments["lcsc_id"] = prompt_for_lcsc_id()
+
+    if not any([arguments["symbol"], arguments["footprint"], arguments["3d"]]):
+        prompt_for_actions(arguments)
+
+    if not arguments["output"]:
+        default_output_base_path = get_default_output_base_path()
+        prompted_output = prompt_for_output_path(
+            prompt=f"Output library base path [default: {default_output_base_path}]: ",
+            allow_blank=True,
+        )
+        if prompted_output:
+            arguments["output"] = prompted_output
+
+    if not arguments["overwrite"]:
+        arguments["overwrite"] = prompt_yes_no(
+            "Overwrite existing symbol/footprint if already present?", default=False
+        )
+
+    if arguments["symbol"] and not arguments["v5"]:
+        if arguments["custom_field"]:
+            logging.info("Custom fields require KiCad v6 symbol output.")
+        else:
+            arguments["v5"] = prompt_yes_no(
+                "Use KiCad v5 legacy symbol format?", default=False
+            )
+
+    if arguments["footprint"] and not arguments["project_relative"]:
+        arguments["project_relative"] = prompt_yes_no(
+            "Store 3D path relative to the project?", default=False
+        )
+
+    if arguments["project_relative"] and not arguments["output"]:
+        arguments["output"] = prompt_for_output_path(
+            prompt="Output library base path (required for project-relative paths): ",
+            allow_blank=False,
+        )
+
+    if arguments["symbol"] and not arguments["v5"]:
+        prompt_for_custom_fields(arguments)
+
+
+def should_use_interactive(arguments: dict) -> bool:
+    missing_required_arguments = not arguments.get("lcsc_id") or not any(
+        [arguments["symbol"], arguments["footprint"], arguments["3d"]]
+    )
+    return arguments["interactive"] or (
+        missing_required_arguments and is_interactive_terminal()
+    )
+
+
+def prompt_overwrite_for_duplicate(item_name: str) -> bool:
+    return prompt_yes_no(f"{item_name} already exists in the target library. Overwrite?")
+
+
 def get_parser() -> argparse.ArgumentParser:
 
     parser = argparse.ArgumentParser(
@@ -59,7 +242,7 @@ def get_parser() -> argparse.ArgumentParser:
         )
     )
 
-    parser.add_argument("--lcsc_id", help="LCSC id", required=True, type=str)
+    parser.add_argument("--lcsc_id", help="LCSC id", required=False, type=str)
 
     parser.add_argument(
         "--symbol", help="Get symbol of this id", required=False, action="store_true"
@@ -114,6 +297,13 @@ def get_parser() -> argparse.ArgumentParser:
     )
 
     parser.add_argument(
+        "--interactive",
+        required=False,
+        help="Prompt for missing values and key export options in the terminal",
+        action="store_true",
+    )
+
+    parser.add_argument(
         "--v5",
         required=False,
         help="Convert library in legacy format for KiCad 5.x",
@@ -139,6 +329,10 @@ def get_parser() -> argparse.ArgumentParser:
 
 
 def valid_arguments(arguments: dict) -> bool:
+
+    if not arguments.get("lcsc_id"):
+        logging.error("Missing --lcsc_id")
+        return False
 
     if not arguments["lcsc_id"].startswith("C"):
         logging.error("lcsc_id should start by C....")
@@ -181,24 +375,14 @@ def valid_arguments(arguments: dict) -> bool:
         return False
 
     if arguments["output"]:
-        base_folder = "/".join(arguments["output"].replace("\\", "/").split("/")[:-1])
-        lib_name = (
-            arguments["output"]
-            .replace("\\", "/")
-            .split("/")[-1]
-            .split(".lib")[0]
-            .split(".kicad_sym")[0]
-        )
+        base_folder, lib_name = parse_output_base_path(output=arguments["output"])
 
         if not os.path.isdir(base_folder):
             logging.error(f"Can't find the folder : {base_folder}")
             return False
     else:
         default_folder = os.path.join(
-            os.path.expanduser("~"),
-            "Documents",
-            "Kicad",
-            "easyeda2kicad",
+            os.path.dirname(get_default_output_base_path()),
         )
         if not os.path.isdir(default_folder):
             os.makedirs(default_folder, exist_ok=True)
@@ -283,6 +467,18 @@ def main(argv: List[str] = sys.argv[1:]) -> int:
     else:
         set_logger(log_file=None, log_level=logging.INFO)
 
+    if arguments["interactive"] and not is_interactive_terminal():
+        logging.error("--interactive requires an interactive terminal")
+        return 1
+
+    arguments["interactive_session"] = should_use_interactive(arguments)
+    if arguments["interactive_session"]:
+        try:
+            prompt_for_arguments(arguments)
+        except InteractiveAbortError:
+            logging.error("Interactive input cancelled")
+            return 1
+
     if not valid_arguments(arguments=arguments):
         return 1
 
@@ -317,39 +513,50 @@ def main(argv: List[str] = sys.argv[1:]) -> int:
             kicad_version=kicad_version,
         )
 
-        if not arguments["overwrite"] and is_id_already_in_symbol_lib:
-            logging.error("Use --overwrite to update the older symbol lib")
-            return 1
+        overwrite_symbol = arguments["overwrite"]
+        if not overwrite_symbol and is_id_already_in_symbol_lib:
+            if arguments["interactive_session"]:
+                overwrite_symbol = prompt_overwrite_for_duplicate("Symbol")
+                if not overwrite_symbol:
+                    logging.info("Skipping symbol export")
+                    is_id_already_in_symbol_lib = False
+                    easyeda_symbol = None
+            else:
+                logging.error("Use --overwrite to update the older symbol lib")
+                return 1
 
-        exporter = ExporterSymbolKicad(
-            symbol=easyeda_symbol,
-            kicad_version=kicad_version,
-            custom_fields=arguments["custom_fields"],
-        )
-        # print(exporter.output)
-        kicad_symbol_lib = exporter.export(
-            footprint_lib_name=arguments["output"].split("/")[-1].split(".")[0],
-        )
-
-        if is_id_already_in_symbol_lib:
-            update_component_in_symbol_lib_file(
-                lib_path=f"{arguments['output']}.{sym_lib_ext}",
-                component_name=easyeda_symbol.info.name,
-                component_content=kicad_symbol_lib,
-                kicad_version=kicad_version,
-            )
+        if easyeda_symbol is None:
+            pass
         else:
-            add_component_in_symbol_lib_file(
-                lib_path=f"{arguments['output']}.{sym_lib_ext}",
-                component_content=kicad_symbol_lib,
+            exporter = ExporterSymbolKicad(
+                symbol=easyeda_symbol,
                 kicad_version=kicad_version,
+                custom_fields=arguments["custom_fields"],
+            )
+            # print(exporter.output)
+            kicad_symbol_lib = exporter.export(
+                footprint_lib_name=arguments["output"].split("/")[-1].split(".")[0],
             )
 
-        logging.info(
-            f"Created Kicad symbol for ID : {component_id}\n"
-            f"       Symbol name : {easyeda_symbol.info.name}\n"
-            f"       Library path : {arguments['output']}.{sym_lib_ext}"
-        )
+            if is_id_already_in_symbol_lib:
+                update_component_in_symbol_lib_file(
+                    lib_path=f"{arguments['output']}.{sym_lib_ext}",
+                    component_name=easyeda_symbol.info.name,
+                    component_content=kicad_symbol_lib,
+                    kicad_version=kicad_version,
+                )
+            else:
+                add_component_in_symbol_lib_file(
+                    lib_path=f"{arguments['output']}.{sym_lib_ext}",
+                    component_content=kicad_symbol_lib,
+                    kicad_version=kicad_version,
+                )
+
+            logging.info(
+                f"Created Kicad symbol for ID : {component_id}\n"
+                f"       Symbol name : {easyeda_symbol.info.name}\n"
+                f"       Library path : {arguments['output']}.{sym_lib_ext}"
+            )
 
     # ---------------- FOOTPRINT ----------------
     if arguments["footprint"]:
@@ -360,32 +567,42 @@ def main(argv: List[str] = sys.argv[1:]) -> int:
             lib_path=f"{arguments['output']}.pretty",
             package_name=easyeda_footprint.info.name,
         )
-        if not arguments["overwrite"] and is_id_already_in_footprint_lib:
-            logging.error("Use --overwrite to replace the older footprint lib")
-            return 1
+        overwrite_footprint = arguments["overwrite"]
+        if not overwrite_footprint and is_id_already_in_footprint_lib:
+            if arguments["interactive_session"]:
+                overwrite_footprint = prompt_overwrite_for_duplicate("Footprint")
+                if not overwrite_footprint:
+                    logging.info("Skipping footprint export")
+                    easyeda_footprint = None
+            else:
+                logging.error("Use --overwrite to replace the older footprint lib")
+                return 1
 
-        ki_footprint = ExporterFootprintKicad(footprint=easyeda_footprint)
-        footprint_filename = f"{easyeda_footprint.info.name}.kicad_mod"
-        footprint_path = f"{arguments['output']}.pretty"
-        model_3d_path = f"{arguments['output']}.3dshapes".replace("\\", "/").replace(
-            "./", "/"
-        )
+        if easyeda_footprint is None:
+            pass
+        else:
+            ki_footprint = ExporterFootprintKicad(footprint=easyeda_footprint)
+            footprint_filename = f"{easyeda_footprint.info.name}.kicad_mod"
+            footprint_path = f"{arguments['output']}.pretty"
+            model_3d_path = f"{arguments['output']}.3dshapes".replace(
+                "\\", "/"
+            ).replace("./", "/")
 
-        if arguments.get("use_default_folder"):
-            model_3d_path = "${EASYEDA2KICAD}/easyeda2kicad.3dshapes"
-        if arguments["project_relative"]:
-            model_3d_path = "${KIPRJMOD}" + model_3d_path
+            if arguments.get("use_default_folder"):
+                model_3d_path = "${EASYEDA2KICAD}/easyeda2kicad.3dshapes"
+            if arguments["project_relative"]:
+                model_3d_path = "${KIPRJMOD}" + model_3d_path
 
-        ki_footprint.export(
-            footprint_full_path=f"{footprint_path}/{footprint_filename}",
-            model_3d_path=model_3d_path,
-        )
+            ki_footprint.export(
+                footprint_full_path=f"{footprint_path}/{footprint_filename}",
+                model_3d_path=model_3d_path,
+            )
 
-        logging.info(
-            f"Created Kicad footprint for ID: {component_id}\n"
-            f"       Footprint name: {easyeda_footprint.info.name}\n"
-            f"       Footprint path: {os.path.join(footprint_path, footprint_filename)}"
-        )
+            logging.info(
+                f"Created Kicad footprint for ID: {component_id}\n"
+                f"       Footprint name: {easyeda_footprint.info.name}\n"
+                f"       Footprint path: {os.path.join(footprint_path, footprint_filename)}"
+            )
 
     # ---------------- 3D MODEL ----------------
     if arguments["3d"]:

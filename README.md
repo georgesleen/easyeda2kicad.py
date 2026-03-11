@@ -1,4 +1,4 @@
-# easyeda2kicad v0.8.1
+# easyeda2kicad v0.9.0
 
 _________________
 [![PyPI version](https://badge.fury.io/py/easyeda2kicad.svg)](https://badge.fury.io/py/easyeda2kicad)
@@ -51,6 +51,8 @@ easyeda2kicad --symbol --footprint --lcsc_id=C2040
 easyeda2kicad --symbol --lcsc_id=C2040
 # For symbol only with extra KiCad symbol properties
 easyeda2kicad --symbol --lcsc_id=C2040 --custom-field "Manufacturer:Texas Instruments" --custom-field "LCSC ID:C2040"
+# For a guided terminal session
+easyeda2kicad --interactive
 # For footprint only
 easyeda2kicad --footprint --lcsc_id=C2040
 # For 3d model only
@@ -99,6 +101,22 @@ easyeda2kicad --symbol --lcsc_id=C2040 --custom-field "Manufacturer:Texas Instru
 Malformed `--custom-field` values fail fast, and if the same key is provided more than once, the last value wins.
 
 When EasyEDA/LCSC does not provide a datasheet URL, the generated symbol datasheet field falls back to `https://www.lcsc.com/datasheet/<LCSC-ID>.pdf`.
+
+Interactive terminal mode is available with `--interactive`. In a terminal, the tool can also prompt automatically when required arguments are missing.
+
+```bash
+easyeda2kicad --interactive
+easyeda2kicad --interactive --symbol --output ~/libs/my_lib
+```
+
+Interactive mode currently prompts for:
+- missing required values like `lcsc_id` and export actions
+- output path selection
+- overwrite preference
+- KiCad v5 / project-relative path choices when relevant
+- repeatable custom symbol properties through an add-another loop
+
+If a symbol or footprint already exists in the target library during an interactive run, the tool prompts before overwriting instead of requiring a rerun with `--overwrite`.
 
 ## 🔗 Add libraries in Kicad
 
